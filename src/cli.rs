@@ -682,6 +682,48 @@ mod tests {
         assert_eq!(pt.window, None);
         assert_eq!(pt.window_name, None);
     }
+
+    // ── extract_flag_value: -F handling for control-mode list-sessions ──
+    //
+    // Regression coverage for the iTerm2 control-mode handshake, which
+    // sends `list-sessions -F "#{session_id} #{session_name}"` as a single
+    // line.  After `parse_command_line`, the value arrives as one already-
+    // unquoted token with embedded spaces; `extract_flag_value` must hand
+    // back the whole thing — not just the first whitespace-separated word.
+
+    #[test]
+    fn extract_flag_value_two_token_with_embedded_spaces() {
+        let args = ["-F", "#{session_id} #{session_name}"];
+        assert_eq!(
+            extract_flag_value(&args, "-F"),
+            Some("#{session_id} #{session_name}".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_flag_value_two_token_simple() {
+        let args = ["-F", "#{session_name}"];
+        assert_eq!(
+            extract_flag_value(&args, "-F"),
+            Some("#{session_name}".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_flag_value_concatenated_form() {
+        // tmux-compat: `-F#{session_id}` (no space) form.
+        let args = ["-F#{session_id}"];
+        assert_eq!(
+            extract_flag_value(&args, "-F"),
+            Some("#{session_id}".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_flag_value_missing_flag() {
+        let args = ["list-sessions"];
+        assert_eq!(extract_flag_value(&args, "-F"), None);
+    }
 }
 
 #[cfg(test)]

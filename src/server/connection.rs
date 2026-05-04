@@ -2255,26 +2255,28 @@ match cmd {
         }
     }
     "list-sessions" | "ls" => {
+        // Mirror list-windows: route -F directly through SessionInfoFormat
+        // (which calls format_list_sessions/expand_format) instead of the
+        // DisplayMessage path. Keeps -F handling structurally identical
+        // between list-sessions and list-windows so quoted multi-word
+        // format strings like `-F "#{session_id} #{session_name}"` are
+        // preserved end-to-end.
         let fmt = extract_flag_value(&args, "-F");
+        let (rtx, rrx) = mpsc::channel::<String>();
         if let Some(fmt_str) = fmt {
-            let (rtx, rrx) = mpsc::channel::<String>();
-            let _ = tx.send(CtrlReq::DisplayMessage(rtx, fmt_str, None, false, None));
-            if let Ok(text) = rrx.recv() {
-                if persistent {
-                    let _ = tx.send(CtrlReq::ShowTextPopup("list-sessions".to_string(), text));
-                } else {
-                    let _ = write!(write_stream, "{}\n", text); let _ = write_stream.flush();
-                }
-            }
+            let _ = tx.send(CtrlReq::SessionInfoFormat(rtx, fmt_str));
         } else {
-            let (rtx, rrx) = mpsc::channel::<String>();
             let _ = tx.send(CtrlReq::SessionInfo(rtx));
-            if let Ok(text) = rrx.recv() {
-                if persistent {
-                    let _ = tx.send(CtrlReq::ShowTextPopup("list-sessions".to_string(), text));
-                } else {
-                    let _ = write!(write_stream, "{}\n", text); let _ = write_stream.flush();
-                }
+        }
+        if let Ok(text) = rrx.recv() {
+            // SessionInfo/SessionInfoFormat both already emit a trailing
+            // newline; strip it so the `write!("{}\n", text)` below adds
+            // exactly one (matching list-windows' single-newline output).
+            let text = text.strip_suffix('\n').map(str::to_string).unwrap_or(text);
+            if persistent {
+                let _ = tx.send(CtrlReq::ShowTextPopup("list-sessions".to_string(), text));
+            } else {
+                let _ = write!(write_stream, "{}\n", text); let _ = write_stream.flush();
             }
         }
         if !persistent { break; }
