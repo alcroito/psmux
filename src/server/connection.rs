@@ -207,10 +207,12 @@ if control_echo || control_noecho {
     // Reference: tmux/control.c control_start() CLIENT_CONTROLCONTROL branch.
     if control_noecho {
         let _ = write_stream.write_all(b"\x1bP1000p");
+    } else {
+        // -C only: an empty line after the DCS opener in -CC mode is read
+        // by iTerm2's tmux parser as a malformed first command and triggers
+        // an immediate detach ("Unrecognized command from tmux").
+        let _ = writeln!(write_stream);
     }
-
-    // Notify client that control mode is ready
-    let _ = writeln!(write_stream);
     let _ = write_stream.flush();
 
     loop {
