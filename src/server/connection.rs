@@ -165,7 +165,34 @@ if control_echo || control_noecho {
 
     let (notif_tx, notif_rx) = std::sync::mpsc::sync_channel::<ControlNotification>(4096);
 
-    // Register with server
+    // Emit the protocol preamble BEFORE registering with the server, so the
+    // DCS opener (in -CC) is on the wire ahead of any notifications the
+    // server might emit in response to ControlRegister (e.g. the
+    // initial-state burst from emit_initial_state). The notification writer
+    // thread is spawned only after this point.
+    //
+    // For -CC (no-echo) mode, emit the DCS opening sequence "\033P1000p".
+    // This is what tmux does in control_start() and is what iTerm2's tmux
+    // integration watches for to switch from terminal mode into native tmux
+    // UI mode. Without it iTerm2 sits forever waiting.
+    // Reference: tmux/control.c control_start() CLIENT_CONTROLCONTROL branch.
+    if control_noecho {
+        let _ = write_stream.write_all(b"\x1bP1000p");
+    } else {
+        // -C only: an empty line after the DCS opener in -CC mode is read
+        // by iTerm2's tmux parser as a malformed first command and triggers
+        // an immediate detach ("Unrecognized command from tmux").
+        let _ = writeln!(write_stream);
+    }
+    let _ = write_stream.flush();
+
+    // Register with server. For -CC mode the server will respond by pushing
+    // an initial-state notification burst (%sessions-changed,
+    // %session-changed, etc.) onto notif_tx. iTerm2's TmuxGateway gates all
+    // outbound writes on receipt of %session-changed (see iTerm2
+    // sources/Tmux/TmuxGateway.m parseSessionChangeCommand: around line 412),
+    // so without this burst the integration deadlocks: psmux waits for a
+    // command, iTerm2 waits for %session-changed, neither sends anything.
     let _ = tx.send(CtrlReq::ControlRegister {
         client_id: ctrl_client_id,
         echo: control_echo,
@@ -199,21 +226,6 @@ if control_echo || control_noecho {
     let mut cmd_counter: u64 = 0;
     let tx_ctrl = tx.clone();
     let aliases_ctrl = aliases.clone();
-
-    // For -CC (no-echo) mode, emit the DCS opening sequence "\033P1000p"
-    // before anything else. This is what tmux does in control_start() and is
-    // what iTerm2's tmux integration watches for to switch from terminal mode
-    // into native tmux UI mode. Without it iTerm2 sits forever waiting.
-    // Reference: tmux/control.c control_start() CLIENT_CONTROLCONTROL branch.
-    if control_noecho {
-        let _ = write_stream.write_all(b"\x1bP1000p");
-    } else {
-        // -C only: an empty line after the DCS opener in -CC mode is read
-        // by iTerm2's tmux parser as a malformed first command and triggers
-        // an immediate detach ("Unrecognized command from tmux").
-        let _ = writeln!(write_stream);
-    }
-    let _ = write_stream.flush();
 
     loop {
         line.clear();

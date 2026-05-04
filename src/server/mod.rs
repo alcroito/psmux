@@ -3974,20 +3974,30 @@ pub fn run_server(session_name: String, socket_name: Option<String>, initial_com
                         is_control: true,
                     });
                     app.attached_clients = app.attached_clients.saturating_add(1);
-                    // NOTE: Real tmux does NOT emit a notification burst on
-                    // -CC attach (see tmux/control.c control_start()). It
-                    // sends only the DCS opener "\033P1000p" and lets the
-                    // client (e.g. iTerm2) drive the dialog with explicit
-                    // list-sessions / list-windows -F commands. The DCS is
-                    // emitted by server/connection.rs right after the
-                    // CONTROL_NOECHO line is parsed. Issue #261 fix:
-                    // missing DCS was the actual hang cause for iTerm2.
+                    // For -CC (control_noecho) attaches we emit an initial
+                    // state burst (%sessions-changed, %session-changed,
+                    // %window-add / %layout-change for each window,
+                    // %session-window-changed, %window-pane-changed). This
+                    // is required by iTerm2's tmux integration: its
+                    // TmuxGateway gates all outbound writes until it
+                    // receives %session-changed (see iTerm2
+                    // sources/Tmux/TmuxGateway.m parseSessionChangeCommand:
+                    // around line 412 — `_canWrite` flips to YES only
+                    // there). Without the burst psmux and iTerm2 deadlock:
+                    // psmux waits for a command, iTerm2 waits for
+                    // %session-changed.
                     //
-                    // The emit_initial_state() helper remains available for
-                    // future explicit refresh hooks but is intentionally
-                    // NOT called here — calling it would emit notifications
-                    // before iTerm2's own list-* commands, which is
-                    // non-standard.
+                    // We skip the burst for plain -C (echo) mode, which is
+                    // intended for human interactive use over a regular
+                    // terminal; spamming notifications there would clutter
+                    // the user's screen.
+                    //
+                    // The DCS opener "\033P1000p" is emitted by
+                    // server/connection.rs *before* this ControlRegister is
+                    // sent, so the burst lands after the DCS on the wire.
+                    if !echo {
+                        crate::control::emit_initial_state(&app, client_id);
+                    }
                 }
                 CtrlReq::ControlSubscribe { client_id, name, target, format } => {
                     if let Some(cc) = app.control_clients.get_mut(&client_id) {
